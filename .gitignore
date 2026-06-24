@@ -1,0 +1,7 @@
+.env
+.env.local
+.env.raspberry
+secrets/
+.pytest_cache/
+__pycache__/
+*.py[cod]

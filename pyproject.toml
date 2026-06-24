@@ -1,0 +1,34 @@
+[project]
+name = "pythia"
+version = "0.1.0"
+description = "Personal Telegram bot for analysing public Instagram Reels"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.16.5",
+    "asyncpg>=0.31.0",
+    "instaloader>=4.15.1",
+    "openai>=1.109.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.2",
+    "python-telegram-bot>=22.8",
+    "sqlalchemy[asyncio]>=2.0.51",
+    "structlog>=26.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+]
+
+[project.scripts]
+pythia = "pythia.main:main"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

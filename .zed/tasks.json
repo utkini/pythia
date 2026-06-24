@@ -1,0 +1,37 @@
+[
+  {
+    "label": "setup deps",
+    "command": "uv sync --all-groups",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": false,
+    "save": "all"
+  },
+  {
+    "label": "run tests",
+    "command": ".venv/bin/pytest",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "save": "all"
+  },
+  {
+    "label": "local:start everything",
+    "command": "docker compose -f docker-compose.local.yml up --build",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "save": "all"
+  },
+  {
+    "label": "local:logs",
+    "command": "docker compose -f docker-compose.local.yml logs -f bot",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "save": "none"
+  },
+  {
+    "label": "local:stop",
+    "command": "docker compose -f docker-compose.local.yml down",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "save": "none"
+  }
+]

@@ -1,139 +1,67 @@
 # Pythia
 
-AI-powered competitive intelligence platform for Instagram Reels, TikTok, and YouTube Shorts.
+Личный Telegram-бот для анализа трёх свежих Reels публичного Instagram-профиля. Он получает опубликованные метрики, скачивает видео через Instaloader, извлекает аудио и 8 кадров через ffmpeg, а затем использует OpenAI для транскрипции и смыслового анализа. Бот отправляет ключевой кадр и отчёт в Telegram; видео, аудио и кадры не хранятся после выполнения задачи.
 
-Pythia continuously monitors competitors, analyzes short-form videos, extracts patterns from successful content, and helps creators discover emerging trends before they become saturated.
+## Возможности MVP
 
-## Vision
+- `/analyze <ссылка на профиль>` или просто ссылка в личном чате.
+- Только один заранее заданный Telegram ID может запускать обработку.
+- До трёх свежих публичных Reels: просмотры, лайки, комментарии, речь, текст на экране, темы, hook и CTA.
+- История запусков, метаданные и текстовый анализ в Supabase Postgres.
+- Один анализ за раз; активная задача не восстанавливается после рестарта, но помечается прерванной.
 
-Most analytics tools answer:
+## Режимы запуска
 
-"What happened?"
+Есть два независимых профиля — выбирайте один:
 
-Pythia answers:
+- **Raspberry Pi + Supabase** — контейнер бота на Pi, управляемая PostgreSQL в Supabase. Использует [docker-compose.yml](docker-compose.yml) и `.env`.
+- **Полностью локальный** — контейнеры бота и PostgreSQL на одной машине. Использует [docker-compose.local.yml](docker-compose.local.yml) и `.env.local`.
 
-"What should I create next?"
+В обоих случаях нужны Telegram Bot Token и OpenAI API key. Instagram session — опциональна: без неё бот пытается обработать только публичные данные без авторизации.
 
-The platform collects competitor content, transcribes speech, analyzes video structure, identifies topics, hooks, CTAs, and content patterns, then surfaces actionable insights.
+Для более стабильного доступа создайте session-файл на доверенной машине командой Instaloader с интерактивным логином, затем скопируйте созданный файл в `secrets/instagram.session`. Не добавляйте пароль или session-файл в Git. Контейнер читает каталог `secrets/` только в режиме read-only; при правах `600` передайте файлу владельца UID `10001` (`sudo chown 10001:10001 secrets/instagram.session`).
 
-## Core Features
+Если session не нужна, оставьте `INSTAGRAM_USERNAME` и `INSTAGRAM_SESSION_FILE` пустыми. В таком режиме закрытые профили недоступны, а Instagram может чаще ограничивать запросы или не отдавать часть метрик.
 
-### Competitor Monitoring
+### Raspberry Pi + Supabase
 
-Track any public creator or brand account.
+```sh
+cp .env.example .env
+mkdir -p secrets
+# заполните .env: укажите строку подключения Supabase
+docker compose build
+docker compose run --rm bot alembic upgrade head
+docker compose up -d
+```
 
-* New videos
-* Publishing frequency
-* Engagement trends
-* Content categories
-* Viral content detection
+В этом режиме локальный контейнер PostgreSQL не создаётся. `.env.example` содержит обычный Supabase URL; приложение преобразует его для asyncpg.
 
-### AI Video Analysis
+### Полностью локальный Docker-стенд
 
-For every video:
+```sh
+cp .env.local.example .env.local
+mkdir -p secrets
+# заполните токены и модели в .env.local
+docker compose -f docker-compose.local.yml up --build
+```
 
-* Speech transcription
-* OCR extraction
-* Scene analysis
-* Topic classification
-* Hook detection
-* CTA detection
-* Sentiment analysis
-* Format classification
+Compose сам запускает PostgreSQL, ждёт его healthcheck, применяет Alembic-миграции сервисом `migrate`, и только затем запускает бот. Локальная база доступна на `localhost:5432` и сохраняет данные в Docker volume `pythia-local-postgres`. Для удаления вместе с данными: `docker compose -f docker-compose.local.yml down -v`.
 
-### Trend Detection
+Логи в любом режиме: `docker compose … logs -f bot`.
 
-Identify:
+## Локальная разработка
 
-* Emerging topics
-* Rising content formats
-* Viral hooks
-* High-performing structures
-* Winning CTA patterns
+```sh
+uv sync --all-groups
+# сначала поднимите только локальную БД командой выше
+set -a; source .env.local; set +a
+uv run alembic upgrade head
+uv run pytest
+uv run pythia
+```
 
-### Competitive Intelligence
+При прямом локальном запуске `.env.local` указывает на `localhost`; внутри локального Docker-стенда Compose заменяет адрес на сервис `db`. `DATABASE_URL` может быть стандартным Supabase PostgreSQL URL; приложение само адаптирует его для async SQLAlchemy. Миграции — единственный механизм изменения схемы базы данных.
 
-Answer questions like:
+## Ограничения
 
-* Which topics are growing?
-* What hooks generate the most engagement?
-* Which competitors are gaining momentum?
-* What formats are becoming viral?
-
-### AI Recommendations
-
-Generate recommendations:
-
-* Content ideas
-* Video concepts
-* Hook suggestions
-* Script outlines
-
-## Example Insight
-
-"Videos mentioning AI automation increased 240% in the last 14 days across tracked competitors."
-
-"78% of viral videos start with a direct question."
-
-"Videos between 18 and 27 seconds perform best in your niche."
-
-## MVP Scope
-
-### Inputs
-
-* Instagram account usernames
-
-### Processing
-
-* Collect public reels
-* Extract metadata
-* Download videos
-* Generate transcript
-* Extract OCR text
-* Generate summary
-* Classify content
-
-### Outputs
-
-* Competitor dashboard
-* Viral content feed
-* Trend reports
-* AI insights
-
-## High-Level Architecture
-
-Frontend:
-
-* Next.js
-* TypeScript
-* Tailwind
-
-Backend:
-
-* FastAPI
-* PostgreSQL
-* Redis
-
-Infrastructure:
-
-* Cloudflare R2
-* Supabase
-* Render / Cloud Run
-
-AI Layer:
-
-* OpenAI
-* Whisper
-* GPT-4o-mini
-
-## Long-Term Goal
-
-Become the "Semrush for Short-Form Video Content".
-
-Instead of tracking keywords, Pythia tracks content patterns, trends, narratives, and audience attention.
-
-## Name Origin
-
-Pythia was the high priestess of Delphi in Ancient Greece, known for delivering prophecies.
-
-The platform helps creators predict future content opportunities before competitors discover them.
+Используйте только публичные профили и соблюдайте правила Instagram и применимое законодательство. Instaloader и Instagram могут ограничить запросы; бот сообщит об этом вместо бесконечных повторов. Этот MVP не подписывается на аккаунты и не выполняет анализ по расписанию.

@@ -1,0 +1,14 @@
+# Raspberry Pi deployment: the database is managed by Supabase.
+name: pythia
+
+services:
+  bot:
+    build: .
+    env_file: ${PYTHIA_ENV_FILE:-.env}
+    restart: unless-stopped
+    volumes:
+      - pythia-work:/tmp/pythia
+      - ./secrets:/run/secrets:ro
+
+volumes:
+  pythia-work:
