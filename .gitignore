@@ -5,3 +5,7 @@ secrets/
 .pytest_cache/
 __pycache__/
 *.py[cod]
+
+# Local Instaloader downloads
+/instagram/
+/reelmetricslab/

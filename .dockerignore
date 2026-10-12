@@ -4,6 +4,9 @@
 __pycache__
 *.py[cod]
 .env
+.env.*
 secrets
+instagram
+reelmetricslab
 tests
 tz.md
