@@ -31,6 +31,16 @@ class ContentAnalysis(BaseModel):
     language: str | None = None
     key_frame_index: int = 0
 
+    @field_validator("screen_text", mode="before")
+    @classmethod
+    def normalize_screen_text(cls, value: object) -> object:
+        """Accept absent text or separate OCR lines without coercing arbitrary data."""
+        if value is None:
+            return ""
+        if isinstance(value, list) and all(isinstance(line, str) for line in value):
+            return "\n".join(value)
+        return value
+
     @field_validator("key_frame_index")
     @classmethod
     def key_frame_is_non_negative(cls, value: int) -> int:

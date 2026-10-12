@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+import json
 
 import httpx
 import pytest
@@ -21,13 +22,32 @@ def analyzer_with_response(raw='{"summary":"test"}', refusal=None, finish='stop'
 
 
 async def test_invalid_model_response_logs_fields_without_content(capsys):
-    analyzer, _ = analyzer_with_response('{"summary":"private-text","screen_text":null}')
+    analyzer, _ = analyzer_with_response('{"summary":"private-text","screen_text":{"text":"private-ocr"}}')
     with pytest.raises(AnalysisError, match='invalid_response_schema'):
         await analyzer.analyse(ReelMetadata(shortcode='a', url='https://example.com'), 'private-transcript', [])
     output = capsys.readouterr().out
     assert 'screen_text' in output
     assert 'private-text' not in output
     assert 'private-transcript' not in output
+    assert 'private-ocr' not in output
+
+
+@pytest.mark.parametrize(('screen_text', 'expected'), [
+    (None, ''), ('', ''), ('Текст на экране', 'Текст на экране'),
+    ([], ''), (['Первая строка', 'Вторая строка'], 'Первая строка\nВторая строка'),
+])
+async def test_visual_analysis_accepts_missing_text_and_ocr_lines(screen_text, expected):
+    analyzer, _ = analyzer_with_response(json.dumps({'summary': 'test', 'screen_text': screen_text}))
+    result = await analyzer.analyse(ReelMetadata(shortcode='a', url='https://example.com'), '', [])
+    assert result.screen_text == expected
+    assert result.model_dump()['screen_text'] == expected
+
+
+@pytest.mark.parametrize('screen_text', [42, ['text', None], {'text': 'value'}])
+async def test_visual_analysis_rejects_invalid_screen_text(screen_text):
+    analyzer, _ = analyzer_with_response(json.dumps({'summary': 'test', 'screen_text': screen_text}))
+    with pytest.raises(AnalysisError, match='invalid_response_schema'):
+        await analyzer.analyse(ReelMetadata(shortcode='a', url='https://example.com'), '', [])
 
 
 async def test_api_error_logs_status_not_body(capsys):

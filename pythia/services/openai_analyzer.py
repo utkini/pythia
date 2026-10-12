@@ -21,6 +21,8 @@ ANALYSIS_INSTRUCTIONS = """You analyse a public Instagram Reel for a Russian-spe
 Use the transcript, engagement metadata, and chronological video frames. Return only JSON with:
 summary (Russian, max 3 sentences), topics (array), screen_text, hook, cta,
 content_format, sentiment, language, key_frame_index (zero-based index in the supplied frames).
+screen_text must be a single string: join visible text lines with newline characters;
+use an empty string when no text is visible. topics must be an array of strings.
 Do not invent information that is absent from the frames or transcript."""
 
 
