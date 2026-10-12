@@ -1,17 +1,23 @@
 from collections.abc import AsyncIterator
 
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 
 def async_database_url(database_url: str) -> str:
-    if database_url.startswith('postgresql+asyncpg://'):
+    """Adapt PostgreSQL URLs and their SSL option for the asyncpg dialect."""
+    if not database_url.startswith(("postgres://", "postgresql://", "postgresql+asyncpg://")):
         return database_url
-    if database_url.startswith('postgresql://'):
-        return database_url.replace('postgresql://', 'postgresql+asyncpg://', 1)
-    if database_url.startswith('postgres://'):
-        return database_url.replace('postgres://', 'postgresql+asyncpg://', 1)
-    return database_url
+
+    url = make_url(database_url).set(drivername="postgresql+asyncpg")
+    query = dict(url.query)
+    if "sslmode" in query:
+        sslmode = query.pop("sslmode")
+        if "ssl" in query and query["ssl"] != sslmode:
+            raise ValueError("Conflicting ssl and sslmode database URL parameters.")
+        query["ssl"] = sslmode
+    return url.set(query=query).render_as_string(hide_password=False)
 
 
 def create_engine(database_url: str) -> AsyncEngine:
