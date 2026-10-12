@@ -1,5 +1,6 @@
 import asyncio
 import shutil
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,17 +40,30 @@ class AnalysisService:
         self._reporter = reporter
         self._work_dir = work_dir
 
-    async def execute(self, username: str, profile_url: str, chat_id: int) -> None:
+    async def execute(self, username: str | None, profile_url: str, chat_id: int) -> None:
         run: AnalysisRun | None = None
         job_dir: Path | None = None
         processed: list[StoredReel] = []
         try:
-            run = await self._repository.create_run(username, profile_url, chat_id)
-            job_dir = self._work_dir / f"run-{run.id}"
+            if username is None:
+                job_dir = self._work_dir / f"download-{uuid.uuid4()}"
+                await self._reporter.info(chat_id, "Скачиваю Reel по ссылке…")
+                item = await asyncio.to_thread(self._collector.download_reel, profile_url, job_dir)
+                username = item.creator_username
+                if username is None:
+                    raise InstagramError("Unable to identify the Reel author.")
+                downloaded = [item]
+                run = await self._repository.create_run(
+                    username, f"https://www.instagram.com/{username}/", chat_id, source_url=profile_url,
+                )
+                await self._repository.set_run_status(run.id, RunStatus.PROCESSING)
+            else:
+                run = await self._repository.create_run(username, profile_url, chat_id)
+                job_dir = self._work_dir / f"run-{run.id}"
+                await self._repository.set_run_status(run.id, RunStatus.PROCESSING)
+                await self._reporter.info(chat_id, "Ищу до трёх свежих Reels профиля и скачиваю видео…")
+                downloaded = await asyncio.to_thread(self._collector.collect, username, job_dir)
             log = logger.bind(run_id=str(run.id), username=username)
-            await self._repository.set_run_status(run.id, RunStatus.PROCESSING)
-            await self._reporter.info(chat_id, "Скачиваю три свежих Reels и метрики…")
-            downloaded = await asyncio.to_thread(self._collector.collect, username, job_dir)
             await self._reporter.info(chat_id, f"Найдено {len(downloaded)} Reel(ов). Анализирую аудио и кадры…")
             for item in downloaded:
                 try:
@@ -60,9 +74,8 @@ class AnalysisService:
             if not processed:
                 raise AnalysisError("No Reel was analysed successfully.")
 
-            rankings = self._rankings(processed)
-            for index, stored in enumerate(processed):
-                await self._reporter.send_reel(chat_id, stored.reel, rankings[index])
+            for stored in processed:
+                await self._reporter.send_reel(chat_id, stored.reel, "")
             status = RunStatus.COMPLETED if len(processed) == len(downloaded) else RunStatus.PARTIAL
             await self._repository.set_run_status(run.id, status)
             await self._reporter.info(chat_id, "Анализ завершён." if status is RunStatus.COMPLETED else "Анализ завершён частично: часть Reels обработать не удалось.")
@@ -76,8 +89,7 @@ class AnalysisService:
             if run is not None:
                 await self._repository.set_run_status(run.id, RunStatus.FAILED, error_code="ai_failed", error_message=str(error))
             await self._reporter.error(chat_id, "Не удалось завершить AI-анализ. Попробуйте ещё раз позже.")
-        except Exception as e:
-            print(e)
+        except Exception:
             logger.bind(run_id=str(run.id) if run else None, username=username).exception("run_failed")
             if run is not None:
                 await self._repository.set_run_status(run.id, RunStatus.FAILED, error_code="internal_error", error_message="Unexpected processing error")
@@ -106,21 +118,14 @@ class AnalysisService:
         )
 
     @staticmethod
-    def _rankings(reels: list[StoredReel]) -> list[str]:
-        by_views = sorted(range(len(reels)), key=lambda index: reels[index].reel.metadata.views_count or -1, reverse=True)
-        rankings = ["" for _ in reels]
-        for rank, index in enumerate(by_views, start=1):
-            rankings[index] = f"{rank}-е место из {len(reels)} по просмотрам в этом запуске."
-        return rankings
-
-    @staticmethod
     def _user_error(code: str) -> str:
         return {
             "private_profile": "Профиль закрыт: можно анализировать только публичные аккаунты.",
             "no_reels": "У профиля нет доступных Reels.",
             "instagram_limited": "Instagram временно ограничил запросы. Попробуйте позднее.",
-            "invalid_url": "Нужна ссылка на публичный Instagram-профиль.",
-        }.get(code, "Не удалось получить данные из Instagram. Проверьте session-файл и повторите попытку позже.")
+            "instagram_blocked": "Instagram остановил доступ к данным. Не повторяйте запрос сразу: откройте Instagram в браузере, проверьте уведомления и вход в аккаунт. Для поиска по профилю может понадобиться обновить session-файл. Можно прислать прямую ссылку на публичный Reel.",
+            "invalid_url": "Нужна ссылка на публичный Instagram-профиль или Reel.",
+        }.get(code, "Не удалось получить данные из Instagram. Для профиля попробуйте прямую ссылку на публичный Reel; для Reel проверьте доступность видео и попробуйте позднее.")
 
 
 class JobManager:

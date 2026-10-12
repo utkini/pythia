@@ -17,6 +17,7 @@ class ReelMetadata(BaseModel):
 class DownloadedReel(BaseModel):
     metadata: ReelMetadata
     video_path: Path
+    creator_username: str | None = None
 
 
 class ContentAnalysis(BaseModel):

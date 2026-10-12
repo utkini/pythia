@@ -18,4 +18,4 @@ COPY pythia ./pythia
 
 RUN uv sync --locked --no-dev
 
-CMD ["uv", "run", "pythia"]
+CMD ["uv", "run", "--no-sync", "pythia"]

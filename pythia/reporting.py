@@ -22,7 +22,7 @@ def render_reel_details(reel: ProcessedReel, ranking: str) -> str:
     analysis = reel.analysis
     metrics = " · ".join(
         f"{label}: {value if value is not None else '—'}"
-        for label, value in (("Просмотры", metadata.views_count), ("Лайки", metadata.likes_count), ("Комментарии", metadata.comments_count))
+        for label, value in (("Лайки", metadata.likes_count), ("Комментарии", metadata.comments_count))
     )
     sections = [
         f"<b>Reel</b> <a href=\"{html.escape(metadata.url, quote=True)}\">открыть в Instagram</a>",

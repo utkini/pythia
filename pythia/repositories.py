@@ -12,7 +12,7 @@ class AnalysisRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def create_run(self, username: str, profile_url: str, requested_by: int) -> AnalysisRun:
+    async def create_run(self, username: str, profile_url: str, requested_by: int, *, source_url: str | None = None) -> AnalysisRun:
         async with self._sessions() as session:
             competitor_id = await session.scalar(select(competitors.c.id).where(competitors.c.username == username))
             if competitor_id is None:
@@ -21,7 +21,7 @@ class AnalysisRepository:
                 )
             run_id = await session.scalar(
                 insert(analysis_runs)
-                .values(competitor_id=competitor_id, requested_by=requested_by, source_url=profile_url)
+                .values(competitor_id=competitor_id, requested_by=requested_by, source_url=source_url or profile_url)
                 .returning(analysis_runs.c.id)
             )
             await session.commit()

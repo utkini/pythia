@@ -8,7 +8,7 @@ from pythia.config import settings
 from pythia.database import check_database, create_engine, create_session_factory
 from pythia.reporting import TelegramReporter
 from pythia.repositories import AnalysisRepository
-from pythia.services.instagram import InvalidProfileUrl, InstagramCollector, normalize_profile_url
+from pythia.services.instagram import InvalidProfileUrl, InstagramCollector, normalize_instagram_url
 from pythia.services.media import MediaProcessor
 from pythia.services.openai_analyzer import OpenAIAnalyzer
 from pythia.services.orchestrator import AnalysisService, JobManager
@@ -37,14 +37,15 @@ async def is_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await is_owner(update, context):
         return
-    await update.effective_message.reply_text("Пришлите ссылку на публичный Instagram-профиль или используйте /analyze <ссылка>.")
+    await update.effective_message.reply_text("Пришлите ссылку на публичный Instagram-профиль или Reel, либо используйте /analyze <ссылка>.")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await is_owner(update, context):
         return
     await update.effective_message.reply_text(
-        "Я анализирую до трёх свежих Reels публичного профиля: метрики, речь, текст на экране и смысл ролика.\n"
+        "Я анализирую до трёх свежих Reels публичного профиля: лайки, комментарии, речь, текст на экране и смысл ролика.\n"
+        "Также принимаю прямую ссылку на Reel. Просмотры пока не учитываются.\n"
         "Пример: /analyze https://www.instagram.com/instagram/"
     )
 
@@ -53,7 +54,7 @@ async def analyse_url(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_ur
     if not await is_owner(update, context):
         return
     try:
-        username, profile_url = normalize_profile_url(raw_url)
+        username, profile_url = normalize_instagram_url(raw_url)
     except InvalidProfileUrl as error:
         await update.effective_message.reply_text(str(error))
         return
@@ -65,7 +66,7 @@ async def analyse_url(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_ur
     if not accepted:
         await update.effective_message.reply_text("Сейчас уже выполняется анализ. Дождитесь его завершения и повторите запрос.")
         return
-    await update.effective_message.reply_text(f"Принято: @{username}. Начинаю анализ, это может занять несколько минут.")
+    await update.effective_message.reply_text(f"Принято: {profile_url}. Начинаю анализ, это может занять несколько минут.")
 
 
 async def analyse_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

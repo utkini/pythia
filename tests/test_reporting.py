@@ -23,7 +23,8 @@ def test_report_escapes_model_output_and_includes_metrics() -> None:
         key_frame_path=Path("/tmp/key.jpg"),
     )
     text = render_reel_details(reel, "1-е место")
-    assert "Просмотры: 1000" in text
+    assert "Просмотры" not in text
+    assert "Лайки: 50" in text
     assert "&lt;script&gt;" in text
     assert "&lt;b&gt;test&lt;/b&gt;" in text
     assert "1-е место" in text

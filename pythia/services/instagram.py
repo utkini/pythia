@@ -1,8 +1,11 @@
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 import instaloader
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 from pythia.config import settings
 from pythia.schemas import DownloadedReel, ReelMetadata
@@ -30,6 +33,10 @@ class InstagramLimited(InstagramError):
     code = "instagram_limited"
 
 
+class InstagramBlocked(InstagramError):
+    code = "instagram_blocked"
+
+
 def normalize_profile_url(value: str) -> tuple[str, str]:
     """Return the Instagram username and canonical profile URL, rejecting post URLs."""
     candidate = value.strip()
@@ -45,8 +52,31 @@ def normalize_profile_url(value: str) -> tuple[str, str]:
     return username, f"https://www.instagram.com/{username}/"
 
 
+def normalize_reel_url(value: str) -> tuple[str, str]:
+    candidate = value.strip()
+    if not candidate.startswith(("http://", "https://")):
+        candidate = f"https://{candidate}"
+    parsed = urlparse(candidate)
+    parts = [part for part in parsed.path.split("/") if part]
+    if parsed.netloc.lower() not in {"instagram.com", "www.instagram.com"}:
+        raise InvalidProfileUrl("Нужна ссылка на Instagram-профиль или Reel.")
+    if len(parts) == 3 and USERNAME_RE.fullmatch(parts[0]):
+        parts = parts[1:]
+    if len(parts) != 2 or parts[0] != "reel" or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", parts[1]):
+        raise InvalidProfileUrl("Нужна ссылка вида instagram.com/reel/<код>/.")
+    return parts[1], f"https://www.instagram.com/reel/{parts[1]}/"
+
+
+def normalize_instagram_url(value: str) -> tuple[str | None, str]:
+    try:
+        return normalize_profile_url(value)
+    except InvalidProfileUrl:
+        _, url = normalize_reel_url(value)
+        return None, url
+
+
 class InstagramCollector:
-    """Synchronous Instaloader adapter; call it from a worker thread."""
+    """Discover profile Reels with Instaloader and download with yt-dlp in a worker thread."""
     def _loader(self, destination: Path) -> instaloader.Instaloader:
         loader = instaloader.Instaloader(
             dirname_pattern=str(destination / "{target}"),
@@ -75,17 +105,47 @@ class InstagramCollector:
             raise InstagramError("Unable to load the Instagram session.") from error
         return loader
 
-    @staticmethod
-    def _metadata(post: instaloader.Post) -> ReelMetadata:
-        views = getattr(post, "video_view_count", None) or getattr(post, "video_play_count", None)
-        return ReelMetadata(
-            shortcode=post.shortcode,
-            url=f"https://www.instagram.com/reel/{post.shortcode}/",
-            caption=post.caption,
-            published_at=post.date_utc,
-            likes_count=post.likes,
-            views_count=views,
-            comments_count=post.comments,
+    def download_reel(self, url: str, destination: Path) -> DownloadedReel:
+        shortcode, canonical = normalize_reel_url(url)
+        reel_dir = destination / shortcode
+        reel_dir.mkdir(parents=True, exist_ok=True)
+        options = {
+            "outtmpl": str(reel_dir / "video.%(ext)s"),
+            "format": "best[acodec!=none][vcodec!=none]/bestvideo+bestaudio",
+            "merge_output_format": "mp4",
+            "noplaylist": True,
+            "quiet": True,
+            "noprogress": True,
+            "cachedir": False,
+            "retries": 0,
+            "extractor_retries": 0,
+            "fragment_retries": 0,
+            "socket_timeout": settings.external_timeout_seconds,
+            "max_filesize": 100 * 1024 * 1024,
+        }
+        try:
+            with YoutubeDL(options) as downloader:
+                info = downloader.extract_info(canonical, download=True)
+        except DownloadError as error:
+            raise InstagramError("Unable to download the public Reel with yt-dlp.") from error
+        if not info or info.get("_type") in {"playlist", "multi_video"}:
+            raise InstagramError("Instagram did not return a single Reel.")
+        videos = [p for p in reel_dir.glob("video.*") if p.suffix in {".mp4", ".mkv", ".webm"}]
+        if len(videos) != 1 or videos[0].stat().st_size == 0:
+            raise InstagramError("No complete video was downloaded (possibly above the size limit).")
+        username = info.get("channel")
+        if not isinstance(username, str) or not USERNAME_RE.fullmatch(username):
+            username = None
+        timestamp = info.get("timestamp")
+        return DownloadedReel(
+            metadata=ReelMetadata(
+                shortcode=shortcode, url=canonical, caption=info.get("description"),
+                published_at=datetime.fromtimestamp(timestamp, UTC) if timestamp is not None else None,
+                likes_count=info.get("like_count"), comments_count=info.get("comment_count"),
+                views_count=None,
+            ),
+            video_path=videos[0],
+            creator_username=username,
         )
 
     def collect(self, username: str, destination: Path) -> list[DownloadedReel]:
@@ -104,23 +164,15 @@ class InstagramCollector:
             raise
         except instaloader.exceptions.TooManyRequestsException as error:
             raise InstagramLimited("Instagram temporarily limited requests.") from error
+        except instaloader.exceptions.AbortDownloadException as error:
+            raise InstagramBlocked("Instagram stopped access; check the account and session before retrying.") from error
         except instaloader.exceptions.InstaloaderException as error:
             raise InstagramError("Instagram did not return public profile data.") from error
 
         if not posts:
             raise NoReels("У профиля нет доступных Reels.")
 
-        downloaded: list[DownloadedReel] = []
-        for post in posts:
-            metadata = self._metadata(post)
-            try:
-                loader.download_post(post, target=metadata.shortcode)
-                matches = sorted((destination / metadata.shortcode).glob("*.mp4"), key=lambda path: path.stat().st_mtime)
-                if not matches:
-                    raise InstagramError(f"No video file was downloaded for {metadata.shortcode}.")
-                downloaded.append(DownloadedReel(metadata=metadata, video_path=matches[-1]))
-            except instaloader.exceptions.TooManyRequestsException as error:
-                raise InstagramLimited("Instagram temporarily limited requests.") from error
-            except instaloader.exceptions.InstaloaderException as error:
-                raise InstagramError(f"Unable to download Reel {metadata.shortcode}.") from error
-        return downloaded
+        return [
+            self.download_reel(f"https://www.instagram.com/reel/{post.shortcode}/", destination)
+            for post in posts
+        ]

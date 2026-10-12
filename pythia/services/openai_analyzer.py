@@ -47,7 +47,6 @@ class OpenAIAnalyzer:
 
     async def analyse(self, metadata: ReelMetadata, transcript: str, frames: list[Path]) -> ContentAnalysis:
         metrics = {
-            "views": metadata.views_count,
             "likes": metadata.likes_count,
             "comments": metadata.comments_count,
             "caption": metadata.caption,
