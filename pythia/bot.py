@@ -2,6 +2,7 @@ import structlog
 from telegram import Update
 from telegram.error import NetworkError
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.request import HTTPXRequest
 
 from pythia.config import settings
 from pythia.database import check_database, create_engine, create_session_factory
@@ -13,6 +14,16 @@ from pythia.services.openai_analyzer import OpenAIAnalyzer
 from pythia.services.orchestrator import AnalysisService, JobManager
 
 logger = structlog.get_logger(__name__)
+
+
+def telegram_request() -> HTTPXRequest:
+    return HTTPXRequest(
+        connect_timeout=20,
+        read_timeout=30,
+        write_timeout=30,
+        pool_timeout=20,
+        media_write_timeout=settings.external_timeout_seconds,
+    )
 
 
 async def is_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -86,6 +97,8 @@ def build_application() -> Application:
     app = (
         ApplicationBuilder()
         .token(settings.telegram_bot_token.get_secret_value())
+        .request(telegram_request())
+        .get_updates_request(telegram_request())
         .concurrent_updates(8)
         .build()
     )

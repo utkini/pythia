@@ -1,9 +1,16 @@
+import asyncio
 import html
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TypeVar
 
 from telegram import Bot
+from telegram.error import BadRequest, NetworkError
 
 from pythia.schemas import ProcessedReel
+
+T = TypeVar("T")
+TELEGRAM_RETRY_DELAYS = (1.0, 2.0, 4.0)
 
 
 def _short(value: str, limit: int) -> str:
@@ -41,19 +48,38 @@ class TelegramReporter:
     def __init__(self, bot: Bot) -> None:
         self._bot = bot
 
+    @staticmethod
+    async def _send_with_retry(operation: Callable[[], Awaitable[T]]) -> T:
+        for delay in (*TELEGRAM_RETRY_DELAYS, None):
+            try:
+                return await operation()
+            except BadRequest:
+                raise
+            except NetworkError:
+                if delay is None:
+                    raise
+                await asyncio.sleep(delay)
+        raise RuntimeError("unreachable")
+
     async def info(self, chat_id: int, message: str) -> None:
-        await self._bot.send_message(chat_id=chat_id, text=message)
+        await self._send_with_retry(lambda: self._bot.send_message(chat_id=chat_id, text=message))
 
     async def error(self, chat_id: int, message: str) -> None:
-        await self._bot.send_message(chat_id=chat_id, text=message)
+        await self._send_with_retry(lambda: self._bot.send_message(chat_id=chat_id, text=message))
 
     async def send_reel(self, chat_id: int, reel: ProcessedReel, ranking: str) -> None:
         caption = _short(f"Reel: {reel.analysis.summary}", 900)
         with Path(reel.key_frame_path).open("rb") as photo:
-            await self._bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
-        await self._bot.send_message(
-            chat_id=chat_id,
-            text=render_reel_details(reel, ranking),
-            parse_mode="HTML",
-            disable_web_page_preview=True,
+            async def send_photo() -> object:
+                photo.seek(0)
+                return await self._bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+
+            await self._send_with_retry(send_photo)
+        await self._send_with_retry(
+            lambda: self._bot.send_message(
+                chat_id=chat_id,
+                text=render_reel_details(reel, ranking),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
         )
