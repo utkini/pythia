@@ -2,10 +2,15 @@ import base64
 import json
 from pathlib import Path
 
-from openai import AsyncOpenAI
+import structlog
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+from pydantic import ValidationError
 
 from pythia.config import settings
 from pythia.schemas import ContentAnalysis, ReelMetadata
+
+
+logger = structlog.get_logger(__name__)
 
 
 class AnalysisError(Exception):
@@ -38,7 +43,26 @@ class OpenAIAnalyzer:
                 )
             return response.text.strip()
         except Exception as error:
-            raise AnalysisError("OpenAI transcription request failed.") from error
+            raise self._failure("transcription", self._transcription_model, error) from error
+
+    @staticmethod
+    def _failure(stage: str, model: str, error: Exception) -> AnalysisError:
+        details: dict[str, object] = {"stage": stage, "model": model, "error_type": type(error).__name__}
+        reason = "unexpected_error"
+        if isinstance(error, APIStatusError):
+            reason = "api_status_error"
+            details.update(status=error.status_code, request_id=error.request_id)
+        elif isinstance(error, APIConnectionError):
+            reason = "connection_error"
+        elif isinstance(error, ValidationError):
+            reason = "invalid_response_schema"
+            # Never log the model response or validation inputs.
+            details["invalid_fields"] = sorted({
+                str(item["loc"][0]) for item in error.errors(include_input=False, include_url=False)
+                if item["loc"] and item["loc"][0] in ContentAnalysis.model_fields
+            })
+        logger.warning("openai_analysis_failed", reason=reason, **details)
+        return AnalysisError(f"OpenAI {stage} failed: {reason} ({type(error).__name__}).")
 
     @staticmethod
     def _image_part(path: Path) -> dict:
@@ -64,7 +88,14 @@ class OpenAIAnalyzer:
                     {"role": "user", "content": content},
                 ],
             )
-            raw = response.choices[0].message.content
+            if not response.choices:
+                raise AnalysisError("OpenAI returned no analysis choices.")
+            choice = response.choices[0]
+            if choice.message.refusal:
+                raise AnalysisError("OpenAI declined the visual analysis.")
+            if choice.finish_reason != "stop":
+                raise AnalysisError("OpenAI returned an incomplete visual analysis.")
+            raw = choice.message.content
             if not raw:
                 raise AnalysisError("OpenAI returned an empty analysis.")
             result = ContentAnalysis.model_validate_json(raw)
@@ -73,7 +104,7 @@ class OpenAIAnalyzer:
         except AnalysisError:
             raise
         except Exception as error:
-            raise AnalysisError("OpenAI visual analysis request failed.") from error
+            raise self._failure("visual_analysis", self._vision_model, error) from error
 
     async def close(self) -> None:
         await self._client.close()
