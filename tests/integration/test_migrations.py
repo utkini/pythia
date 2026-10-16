@@ -12,3 +12,5 @@ def test_migrations_apply(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", os.environ["PYTHIA_TEST_DATABASE_URL"])
     config = Config("alembic.ini")
     command.upgrade(config, "head")
+    command.downgrade(config, "20260623_0001")
+    command.upgrade(config, "head")

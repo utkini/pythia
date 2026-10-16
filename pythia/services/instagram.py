@@ -1,9 +1,9 @@
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-import instaloader
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
@@ -17,39 +17,14 @@ class InstagramError(Exception):
     code = "instagram_failed"
 
 
-class InvalidProfileUrl(InstagramError):
+class InvalidReelUrl(InstagramError):
     code = "invalid_url"
 
 
-class PrivateProfile(InstagramError):
-    code = "private_profile"
-
-
-class NoReels(InstagramError):
-    code = "no_reels"
-
-
-class InstagramLimited(InstagramError):
-    code = "instagram_limited"
-
-
-class InstagramBlocked(InstagramError):
-    code = "instagram_blocked"
-
-
-def normalize_profile_url(value: str) -> tuple[str, str]:
-    """Return the Instagram username and canonical profile URL, rejecting post URLs."""
-    candidate = value.strip()
-    if not candidate.startswith(("http://", "https://")):
-        candidate = f"https://{candidate}"
-    parsed = urlparse(candidate)
-    if parsed.netloc.lower() not in {"instagram.com", "www.instagram.com"}:
-        raise InvalidProfileUrl("Нужна ссылка на профиль instagram.com/<username>.")
-    parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) != 1 or not USERNAME_RE.fullmatch(parts[0]) or parts[0].lower() in {"p", "reel", "reels", "stories"}:
-        raise InvalidProfileUrl("Нужна ссылка на публичный профиль, а не на пост или Reel.")
-    username = parts[0]
-    return username, f"https://www.instagram.com/{username}/"
+MAX_REELS = 3
+INPUT_EXAMPLE = (
+    "Пример:\nhttps://www.instagram.com/reel/AAA/\nhttps://www.instagram.com/reel/BBB/"
+)
 
 
 def normalize_reel_url(value: str) -> tuple[str, str]:
@@ -59,51 +34,42 @@ def normalize_reel_url(value: str) -> tuple[str, str]:
     parsed = urlparse(candidate)
     parts = [part for part in parsed.path.split("/") if part]
     if parsed.netloc.lower() not in {"instagram.com", "www.instagram.com"}:
-        raise InvalidProfileUrl("Нужна ссылка на Instagram-профиль или Reel.")
+        raise InvalidReelUrl("Нужна ссылка на Instagram Reel.")
     if len(parts) == 3 and USERNAME_RE.fullmatch(parts[0]):
         parts = parts[1:]
     if len(parts) != 2 or parts[0] != "reel" or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", parts[1]):
-        raise InvalidProfileUrl("Нужна ссылка вида instagram.com/reel/<код>/.")
+        raise InvalidReelUrl("Нужна ссылка вида instagram.com/reel/<код>/.")
     return parts[1], f"https://www.instagram.com/reel/{parts[1]}/"
 
 
-def normalize_instagram_url(value: str) -> tuple[str | None, str]:
-    try:
-        return normalize_profile_url(value)
-    except InvalidProfileUrl:
-        _, url = normalize_reel_url(value)
-        return None, url
+@dataclass(frozen=True, slots=True)
+class ReelRequest:
+    urls: list[str]
+    duplicates: int
+
+
+def parse_reel_urls(text: str) -> ReelRequest:
+    """Validate the whole message before any network call; keep the user's order."""
+    tokens = text.split()
+    if not tokens:
+        raise InvalidReelUrl(f"Пришлите от 1 до {MAX_REELS} ссылок на Reels.\n{INPUT_EXAMPLE}")
+    urls: dict[str, str] = {}
+    for token in tokens:
+        try:
+            shortcode, canonical = normalize_reel_url(token)
+        except InvalidReelUrl:
+            raise InvalidReelUrl(
+                f"Не похоже на ссылку на Reel: {token[:80]}\n"
+                f"Принимаются только ссылки instagram.com/reel/<код>/ (профили и посты /p/ не поддерживаются).\n{INPUT_EXAMPLE}"
+            ) from None
+        urls.setdefault(shortcode, canonical)
+    if len(urls) > MAX_REELS:
+        raise InvalidReelUrl(f"Можно прислать не больше {MAX_REELS} разных Reels за раз, получено {len(urls)}.")
+    return ReelRequest(urls=list(urls.values()), duplicates=len(tokens) - len(urls))
 
 
 class InstagramCollector:
-    """Discover profile Reels with Instaloader and download with yt-dlp in a worker thread."""
-    def _loader(self, destination: Path) -> instaloader.Instaloader:
-        loader = instaloader.Instaloader(
-            dirname_pattern=str(destination / "{target}"),
-            filename_pattern="{shortcode}",
-            download_pictures=False,
-            download_videos=True,
-            download_video_thumbnails=False,
-            download_geotags=False,
-            download_comments=False,
-            save_metadata=False,
-            compress_json=False,
-            quiet=True,
-            max_connection_attempts=3,
-            request_timeout=float(settings.external_timeout_seconds),
-        )
-        session_file = settings.instagram_session_file
-        session_username = settings.instagram_username
-        if not session_file or not session_username or not session_file.is_file():
-            return loader
-        try:
-            loader.load_session_from_file(
-                session_username,
-                str(session_file),
-            )
-        except instaloader.exceptions.InstaloaderException as error:
-            raise InstagramError("Unable to load the Instagram session.") from error
-        return loader
+    """Download a single public Reel with yt-dlp; call from a worker thread."""
 
     def download_reel(self, url: str, destination: Path) -> DownloadedReel:
         shortcode, canonical = normalize_reel_url(url)
@@ -147,32 +113,3 @@ class InstagramCollector:
             video_path=videos[0],
             creator_username=username,
         )
-
-    def collect(self, username: str, destination: Path) -> list[DownloadedReel]:
-        destination.mkdir(parents=True, exist_ok=True)
-        loader = self._loader(destination)
-        try:
-            profile = instaloader.Profile.from_username(loader.context, username)
-            if profile.is_private:
-                raise PrivateProfile("Профиль закрыт.")
-            posts = []
-            for post in profile.get_reels():
-                posts.append(post)
-                if len(posts) == 3:
-                    break
-        except PrivateProfile:
-            raise
-        except instaloader.exceptions.TooManyRequestsException as error:
-            raise InstagramLimited("Instagram temporarily limited requests.") from error
-        except instaloader.exceptions.AbortDownloadException as error:
-            raise InstagramBlocked("Instagram stopped access; check the account and session before retrying.") from error
-        except instaloader.exceptions.InstaloaderException as error:
-            raise InstagramError("Instagram did not return public profile data.") from error
-
-        if not posts:
-            raise NoReels("У профиля нет доступных Reels.")
-
-        return [
-            self.download_reel(f"https://www.instagram.com/reel/{post.shortcode}/", destination)
-            for post in posts
-        ]

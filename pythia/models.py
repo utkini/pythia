@@ -31,10 +31,12 @@ analysis_runs = Table(
     "analysis_runs",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-    Column("competitor_id", UUID(as_uuid=True), ForeignKey("competitors.id"), nullable=False, index=True),
+    Column("competitor_id", UUID(as_uuid=True), ForeignKey("competitors.id"), index=True),
     Column("requested_by", Integer, nullable=False),
     Column("status", String(32), nullable=False, default=RunStatus.QUEUED, index=True),
-    Column("source_url", String(512), nullable=False),
+    Column("source_url", String(512)),
+    Column("source_urls", JSONB),
+    Column("ranking_json", JSONB),
     Column("error_code", String(64)),
     Column("error_message", Text),
     Column("started_at", DateTime(timezone=True)),
@@ -47,7 +49,7 @@ reels = Table(
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
     Column("run_id", UUID(as_uuid=True), ForeignKey("analysis_runs.id"), nullable=False, index=True),
-    Column("competitor_id", UUID(as_uuid=True), ForeignKey("competitors.id"), nullable=False, index=True),
+    Column("competitor_id", UUID(as_uuid=True), ForeignKey("competitors.id"), index=True),
     Column("shortcode", String(32), nullable=False),
     Column("url", String(512), nullable=False),
     Column("caption", Text),
@@ -57,7 +59,7 @@ reels = Table(
     Column("comments_count", Integer),
     Column("duration_seconds", Integer),
     Column("collected_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-    UniqueConstraint("shortcode", name="uq_reels_shortcode"),
+    UniqueConstraint("run_id", "shortcode", name="uq_reels_run_shortcode"),
 )
 
 reel_analyses = Table(
@@ -76,7 +78,6 @@ reel_analyses = Table(
 @dataclass(frozen=True, slots=True)
 class AnalysisRun:
     id: uuid.UUID
-    competitor_id: uuid.UUID
 
 
 @dataclass(frozen=True, slots=True)

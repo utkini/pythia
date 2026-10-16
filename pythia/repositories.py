@@ -12,20 +12,32 @@ class AnalysisRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def create_run(self, username: str, profile_url: str, requested_by: int, *, source_url: str | None = None) -> AnalysisRun:
+    async def create_run(self, requested_by: int, source_urls: list[str]) -> AnalysisRun:
+        async with self._sessions() as session:
+            run_id = await session.scalar(
+                insert(analysis_runs)
+                .values(requested_by=requested_by, source_urls=source_urls)
+                .returning(analysis_runs.c.id)
+            )
+            await session.commit()
+            return AnalysisRun(id=run_id)
+
+    async def get_or_create_competitor(self, username: str) -> uuid.UUID:
         async with self._sessions() as session:
             competitor_id = await session.scalar(select(competitors.c.id).where(competitors.c.username == username))
             if competitor_id is None:
                 competitor_id = await session.scalar(
-                    insert(competitors).values(username=username, profile_url=profile_url).returning(competitors.c.id)
+                    insert(competitors)
+                    .values(username=username, profile_url=f"https://www.instagram.com/{username}/")
+                    .returning(competitors.c.id)
                 )
-            run_id = await session.scalar(
-                insert(analysis_runs)
-                .values(competitor_id=competitor_id, requested_by=requested_by, source_url=source_url or profile_url)
-                .returning(analysis_runs.c.id)
-            )
+                await session.commit()
+            return competitor_id
+
+    async def save_ranking(self, run_id: uuid.UUID, ranking: dict) -> None:
+        async with self._sessions() as session:
+            await session.execute(update(analysis_runs).where(analysis_runs.c.id == run_id).values(ranking_json=ranking))
             await session.commit()
-            return AnalysisRun(id=run_id, competitor_id=competitor_id)
 
     async def set_run_status(
         self,
@@ -54,9 +66,9 @@ class AnalysisRepository:
             )
             await session.commit()
 
-    async def save_reel(self, run_id: uuid.UUID, competitor_id: uuid.UUID, metadata: ReelMetadata, duration_seconds: int | None) -> Reel:
+    async def save_reel(self, run_id: uuid.UUID, competitor_id: uuid.UUID | None, metadata: ReelMetadata, duration_seconds: int | None) -> Reel:
         async with self._sessions() as session:
-            reel_id = await session.scalar(select(reels.c.id).where(reels.c.shortcode == metadata.shortcode))
+            reel_id = await session.scalar(select(reels.c.id).where(reels.c.run_id == run_id, reels.c.shortcode == metadata.shortcode))
             values = {
                 "run_id": run_id,
                 "competitor_id": competitor_id,

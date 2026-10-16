@@ -36,7 +36,6 @@ services:
       - .env.local
     environment:
       DATABASE_URL: postgresql://pythia:pythia@db:5432/pythia
-      INSTAGRAM_SESSION_FILE: /run/secrets/instagram.session
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -46,7 +45,6 @@ services:
       net.ipv6.conf.default.disable_ipv6: "1"
     volumes:
       - pythia-local-work:/tmp/pythia
-      - ./secrets:/run/secrets:ro
 
 volumes:
   pythia-local-postgres:

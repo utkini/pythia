@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 from telegram.error import BadRequest, NetworkError
 
-from pythia.reporting import TelegramReporter, render_reel_details
+from pythia.reporting import TelegramReporter, render_ranking, render_reel_details
 from pythia.schemas import ContentAnalysis, ProcessedReel, ReelMetadata
+from pythia.services.ranking import RankedReel, Ranking
 
 
 def test_report_escapes_model_output_and_includes_metrics() -> None:
@@ -22,12 +23,34 @@ def test_report_escapes_model_output_and_includes_metrics() -> None:
         analysis=ContentAnalysis(summary="<b>test</b>", topics=["AI"], key_frame_index=0),
         key_frame_path=Path("/tmp/key.jpg"),
     )
-    text = render_reel_details(reel, "1-е место")
+    text = render_reel_details(reel, 2)
     assert "Просмотры" not in text
     assert "Лайки: 50" in text
     assert "&lt;script&gt;" in text
     assert "&lt;b&gt;test&lt;/b&gt;" in text
-    assert "1-е место" in text
+    assert "<b>Reel 2</b>" in text
+
+
+def entry(position: int, likes: int | None, comments: int | None, score: int | None) -> RankedReel:
+    return RankedReel(position, f"https://www.instagram.com/reel/c{position}/?a=1&b=<2>", likes, comments, score, 4)
+
+
+def test_ranking_names_single_winner_and_failures() -> None:
+    ranking = Ranking(entries=[entry(3, 50, 20, 110), entry(1, None, 5, None)], winners=[3])
+    text = render_ranking(ranking, {2: "не удалось <скачать>"})
+    assert "Лучшая вовлечённость: Reel 3" in text
+    assert "🏆" in text.splitlines()[1]
+    assert "нет данных" in text and "❤️ —" in text
+    assert "Reel 2 — не обработан: не удалось &lt;скачать&gt;" in text
+    assert "&amp;b=&lt;2&gt;" in text
+    assert "Просмотры недоступны" in text
+
+
+def test_ranking_reports_tie_and_no_winner() -> None:
+    tie = Ranking(entries=[entry(1, 10, 0, 10), entry(2, 1, 3, 10)], winners=[1, 2])
+    assert "Reel 1 и Reel 2" in render_ranking(tie, {})
+    none = Ranking(entries=[entry(1, 10, 0, 10)], winners=[])
+    assert "Победителя определить нельзя" in render_ranking(none, {2: "x"})
 
 
 class FlakyBot:
@@ -104,7 +127,7 @@ async def test_reporter_rewinds_photo_on_retry(tmp_path: Path, monkeypatch: pyte
         key_frame_path=photo_path,
     )
 
-    await TelegramReporter(bot).send_reel(1, reel, "1-е место")
+    await TelegramReporter(bot).send_reel(1, reel, 1)
 
     assert bot.uploads == [b"photo content", b"photo content"]
     assert bot.calls == 2

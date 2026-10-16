@@ -8,7 +8,6 @@ services:
     restart: unless-stopped
     volumes:
       - pythia-work:/tmp/pythia
-      - ./secrets:/run/secrets:ro
 
 volumes:
   pythia-work:
